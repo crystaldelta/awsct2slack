@@ -95,17 +95,41 @@ exports.handler = function (event, context) {
    * Prepares and formats the slack message and returns the correct Slack structure as per https://api.slack.com/incoming-webhooks
    */
   function prepareSlackMessage (message) {
-    var text = 'Event *' + message.eventName + '*' +
+    var text = '*' + message.eventName + '*' +
               ' performed by type *' + message.userIdentity.type + '*' +
               ' who is *' + ((message.userIdentity.type === 'IAMUser') ? message.userIdentity.userName : message.userIdentity.principalId) + '*' +
-              ' via *' + message.eventType + '*' +
+              '/*' + message.eventType + '*' +
               ' in region *' + message.awsRegion + '*' +
               ' from *' + message.sourceIPAddress + '*' +
               ' at *' + message.eventTime + '*'
 
+    var attachments = []
+
+    if (message.errorCode) {
+      attachments.push({ text: 'errorCode: ' + message.errorCode })
+      attachments.push({ text: 'errorMessage: ' + message.errorMessage })
+    }
+
+    if (message.requestParameters) {
+      if (message.requestParameters.bucketName) {
+        attachments.push({ text: 'bucketName: ' + message.requestParameters.bucketName })
+      }
+
+      if (message.requestParameters.id) {
+        attachments.push({ text: 'id: ' + message.requestParameters.id })
+      }
+
+      if (message.requestParameters.groupName) {
+        attachments.push({ text: 'groupName: ' + message.requestParameters.groupName })
+      }
+
+      attachments.push({ text: JSON.stringify(message.requestParameters) })
+    }
+
     var postData = {
       'username': config.slack.name,
-      'text': text
+      'text': text,
+      attachments: attachments
     }
 
     // override the default WebHook channel if it is provided
