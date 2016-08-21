@@ -13,7 +13,7 @@ for (var attrname in ignoreConfig) {
 exports.handler = function (event, context) {
   var logger = getLogger()
 
-  logger.info(event)
+  logger.info('Processing event: ', event)
 
   var payload = new Buffer(event.awslogs.data, 'base64')
   var result = zlib.gunzipSync(payload)
@@ -23,24 +23,40 @@ exports.handler = function (event, context) {
     return parseEvent(logEvent, resultParsed.logGroup, resultParsed.logStream)
   })
 
+  logger.debug('Creating slackbot')
+
   var controller = botkit.slackbot({
-    debug: false
+    debug: true
   })
+
+  logger.debug('Spawning controller')
 
   var bot = controller.spawn({
     token: config.slack.token
   })
 
-  bot.startRTM(function (err, bot, payload) {
+  logger.debug('Starting RTM')
+
+  logger.debug('Now posting events')
+  filterEvents(parsedEvents, function (err, result) {
     if (err) {
       logger.error(err)
       return context.done(err)
     }
 
-    postEvents(parsedEvents, function (err) {
+    if (result.length === 0) {
+      logger.info('all done - no messages to send')
+      return context.done(null)
+    }
+
+    bot.startRTM(function (err, bot, payload) {
       if (err) {
-        logger.error(err)
+        logger.error('Error!: ', err)
         return context.done(err)
+      }
+
+      for (var i = 0; i < result.length; i++) {
+        bot.say(result[i])
       }
 
       logger.info('all done')
@@ -60,7 +76,8 @@ exports.handler = function (event, context) {
     }
   }
 
-  function postEvents (parsedEvents, callback) {
+  function filterEvents (parsedEvents, callback) {
+    var messagesToSend = []
     for (var i = 0; i < parsedEvents.length; i++) {
       try {
         var message = {}
@@ -81,14 +98,14 @@ exports.handler = function (event, context) {
 
         logger.info('Posting', JSON.stringify(postData))
 
-        bot.say(postData)
+        messagesToSend.push(postData)
       } catch (err) {
         logger.error('Error: ', err)
         logger.error('Message: ', parsedEvents[i])
         return callback(err)
       }
     }
-    return callback()
+    return callback(null, messagesToSend)
   }
 
   /*
@@ -96,18 +113,18 @@ exports.handler = function (event, context) {
    */
   function prepareSlackMessage (message) {
     var text = '*' + message.eventName + '*' +
-              ' performed by type *' + message.userIdentity.type + '*' +
-              ' who is *' + ((message.userIdentity.type === 'IAMUser') ? message.userIdentity.userName : message.userIdentity.principalId) + '*' +
-              '/*' + message.eventType + '*' +
-              ' in region *' + message.awsRegion + '*' +
+              ' performed by *' + message.userIdentity.type +
+              '/' + ((message.userIdentity.type === 'IAMUser') ? message.userIdentity.userName : message.userIdentity.principalId) + '*' +
+              ' via *' + message.eventType + '*' +
+              ' in *' + message.awsRegion + '*' +
               ' from *' + message.sourceIPAddress + '*' +
               ' at *' + message.eventTime + '*'
 
     var attachments = []
 
     if (message.errorCode) {
-      attachments.push({ text: 'errorCode: ' + message.errorCode })
-      attachments.push({ text: 'errorMessage: ' + message.errorMessage })
+      attachments.push({ text: '*Error Code*: ' + message.errorCode, color: 'danger' })
+      attachments.push({ text: '*Error Message*: ' + message.errorMessage, color: 'danger' })
     }
 
     if (message.requestParameters) {
@@ -123,8 +140,10 @@ exports.handler = function (event, context) {
         attachments.push({ text: 'groupName: ' + message.requestParameters.groupName })
       }
 
-      attachments.push({ text: JSON.stringify(message.requestParameters) })
+      text += '\n     _Request Params => ' + JSON.stringify(message.requestParameters) + '_'
     }
+
+    // attachments.push({ ts: new Date(message.eventTime).getTime() / 1000 })
 
     var postData = {
       'username': config.slack.name,
@@ -144,6 +163,11 @@ exports.handler = function (event, context) {
    * Based on the config provided, this will determine if this event should be sent to Slack or ignored
    */
   function isIgnoreEvent (message) {
+    // check if there are any errors to ignore
+    if (message.errorCode && (config.ignoredErrorCodes.indexOf(message.errorCode) === -1)) {
+      return false
+    }
+
     if (config.ignoredEvents.indexOf(message.eventName) > -1) {
       logger.debug(message.eventName, ' being ignoring based on ignoredEvent ')
       return true
@@ -175,7 +199,7 @@ exports.handler = function (event, context) {
   function getLogger () {
     return {
       silly: function () {},
-      debug: function () {},
+      debug: console.log,
       info: console.log,
       warn: console.log,
       error: console.error
