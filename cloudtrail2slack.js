@@ -5,6 +5,8 @@ var botkit = require('botkit')
 var config = require('./config/config')
 var ignoreConfig = require('./config/ignoreConfig')
 
+var MAX_REQUEST_DETAIL = 2000
+
 // merge ignore into main config at runtime
 for (var attrname in ignoreConfig) {
   config[attrname] = ignoreConfig[attrname]
@@ -140,10 +142,13 @@ exports.handler = function (event, context) {
         attachments.push({ text: 'groupName: ' + message.requestParameters.groupName })
       }
 
-      text += '\n     _Request Params => ' + JSON.stringify(message.requestParameters) + '_'
+      var requestDetails = JSON.stringify(message.requestParameters).trim()
+      var requestDetailsLength = requestDetails.length > MAX_REQUEST_DETAIL ? MAX_REQUEST_DETAIL : requestDetails.length
+      text += '\n_Request Params_ => ```' + requestDetails.substring(0, requestDetailsLength) + '```'
+      if (requestDetailsLength < requestDetails.length) {
+        text += '\n (truncated details)'
+      }
     }
-
-    // attachments.push({ ts: new Date(message.eventTime).getTime() / 1000 })
 
     var postData = {
       'username': config.slack.name,
@@ -164,8 +169,8 @@ exports.handler = function (event, context) {
    */
   function isIgnoreEvent (message) {
     // check if there are any errors to ignore
-    if (message.errorCode && (config.ignoredErrorCodes.indexOf(message.errorCode) === -1)) {
-      return false
+    if (message.errorCode && (config.ignoredErrorCodes.indexOf(message.errorCode) > -1)) {
+      return true
     }
 
     if (config.ignoredEvents.indexOf(message.eventName) > -1) {
